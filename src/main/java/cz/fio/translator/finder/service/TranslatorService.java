@@ -9,8 +9,6 @@ public interface TranslatorService {
 
 	List<TranslateScript> findEmptyTranslationSections();
 
-	List<TranslationAO> findUnusedTranslations(String projectPath);
-
 	List<TranslateScript> findUnusedTranslationSections();
 
 	List<TranslationAO> findUnusedTranslations();

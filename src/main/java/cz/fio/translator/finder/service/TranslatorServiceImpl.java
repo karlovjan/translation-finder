@@ -9,13 +9,13 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import cz.fio.translator.finder.exception.GitServiceException;
@@ -28,9 +28,23 @@ public class TranslatorServiceImpl implements TranslatorService {
 
 	private static final Logger log = LoggerFactory.getLogger(TranslatorServiceImpl.class);
 
-	private static final String BRANCH_VERSION = "PROD";
+	@Value("${app.filter.git.projects:}")
+	private List<String> projects;
+
+	//	private static final String BRANCH_VERSION = "PROD";
+	@Value("${app.filter.translator.branch:PROD}")
+	private String branchVersion;
+
 	//V PRAC nejsou nektere sekce
-	private static final String IB2_SUBSECTION = "cz/fio/ib2";
+	//	private static final String IB2_SUBSECTION = "cz/fio/ib2";
+	@Value("${app.filter.translator.subsections:}")
+	private List<String> subsections;
+
+	@Value("${app.filter.git.projects.subpaths:}")
+	private List<String> projectSubpaths;
+
+	@Value("${app.filter.git.file.types:}")
+	private List<String> fileTypes;
 
 	private static final int LANGUAGE_CS = 1;
 	private static final int TRANSLATOR_STATUS = 1;
@@ -47,7 +61,7 @@ public class TranslatorServiceImpl implements TranslatorService {
 	public List<TranslateScript> findUnusedTranslationSections() {
 
 		try {
-			var sections = repository.getScriptsForBranch(LANGUAGE_CS, BRANCH_VERSION, TRANSLATOR_STATUS);
+			var sections = repository.getScriptsForBranch(LANGUAGE_CS, branchVersion, TRANSLATOR_STATUS);
 			return findUnusedTranslationSections(sections);
 		} catch (IOException e) {
 			throw new RuntimeException("Error in reading project directory: " + gitService.getRepoFolder(), e);
@@ -77,7 +91,7 @@ public class TranslatorServiceImpl implements TranslatorService {
 			throws IOException, GitServiceException {
 
 		List<TranslateScript> ib2ProdSection = sections.stream().filter(this::filterBranche)
-				.filter(this::filterRootSection).collect(Collectors.toList());
+				.filter(this::filterTranslationSubsections).collect(Collectors.toList());
 
 		List<TranslateScript> unusedSections = findUnusedTranslationSections("master", ib2ProdSection);
 
@@ -95,41 +109,10 @@ public class TranslatorServiceImpl implements TranslatorService {
 	@Override
 	public List<TranslateScript> findEmptyTranslationSections() {
 
-		var sections = repository.getScriptsForBranch(LANGUAGE_CS, BRANCH_VERSION, TRANSLATOR_STATUS);
+		var sections = repository.getScriptsForBranch(LANGUAGE_CS, branchVersion, TRANSLATOR_STATUS);
 
-		return sections.stream().filter(this::filterBranche)
-				.filter(this::filterRootSection).filter(this::filterEmptyTranslationSection).collect(Collectors.toList());
-
-	}
-
-	@Override
-	public List<TranslationAO> findUnusedTranslations(String projectPath) {
-		Objects.requireNonNull(projectPath);
-
-		final List<Path> srcFiles = new ArrayList<>();
-		try {
-			listSourceFiles(Paths.get(projectPath), srcFiles);
-		} catch (IOException e) {
-			throw new RuntimeException("Error in reading project directory: " + projectPath, e);
-		}
-
-		log.info("Found files in directory {} {}", projectPath, srcFiles.size());
-
-		/*
-		- filter branche and  root section
-		- filter section with no class in project
-		- filter emtpy sections
-		- filter translation
-		 */
-
-		return repository.getScriptsForBranch(LANGUAGE_CS, BRANCH_VERSION, TRANSLATOR_STATUS).parallelStream()
-				.filter(this::filterBranche).filter(this::filterRootSection).flatMap(
-						section -> srcFiles.stream().filter(path -> filterUnusedSection(section, path)).findFirst()
-								.map(p -> Stream.of(section)).orElseGet(() -> logUnusedSection(section)))
-				.flatMap(this::mapToTranslationAO).filter(t -> filterClassNamesInKey(t.getKey()))
-				.filter(t -> filterKeysWithDashChar(t.getKey())).filter(t -> filterDropDownChoiceNUll(t.getKey()))
-				.filter(t -> srcFiles.stream().filter(path -> filterUnusedKey(path, t)).findFirst().isEmpty())
-				.collect(Collectors.toList());
+		return sections.stream().filter(this::filterBranche).filter(this::filterTranslationSubsections)
+				.filter(this::filterEmptyTranslationSection).collect(Collectors.toList());
 
 	}
 
@@ -137,7 +120,7 @@ public class TranslatorServiceImpl implements TranslatorService {
 	public List<TranslationAO> findUnusedTranslations() {
 
 		try {
-			var sections = repository.getScriptsForBranch(LANGUAGE_CS, BRANCH_VERSION, TRANSLATOR_STATUS);
+			var sections = repository.getScriptsForBranch(LANGUAGE_CS, branchVersion, TRANSLATOR_STATUS);
 
 			final List<TranslateScript> unusedSections = findUnusedTranslationSections(sections);
 
@@ -145,7 +128,7 @@ public class TranslatorServiceImpl implements TranslatorService {
 			unusedSections.forEach(us -> log.info(us.toString()));
 
 			List<TranslateScript> ib2ProdSection = sections.stream().filter(this::filterBranche)
-					.filter(this::filterRootSection).collect(Collectors.toList());
+					.filter(this::filterTranslationSubsections).collect(Collectors.toList());
 
 			//filter only used sections
 			var usedSectionsStream = ib2ProdSection.stream()
@@ -201,7 +184,7 @@ public class TranslatorServiceImpl implements TranslatorService {
 	}
 
 	private Stream<TranslationAO> mapToTranslationAO(TranslateScript section) {
-		var translationDB = repository.getTranslation(section.getScriptId(), LANGUAGE_CS, BRANCH_VERSION);
+		var translationDB = repository.getTranslation(section.getScriptId(), LANGUAGE_CS, branchVersion);
 
 		if (translationDB.isEmpty()) {
 			return logEmptySection(section);
@@ -211,14 +194,9 @@ public class TranslatorServiceImpl implements TranslatorService {
 	}
 
 	private boolean filterEmptyTranslationSection(TranslateScript section) {
-		var translationDB = repository.getTranslation(section.getScriptId(), LANGUAGE_CS, BRANCH_VERSION);
+		var translationDB = repository.getTranslation(section.getScriptId(), LANGUAGE_CS, branchVersion);
 
 		return translationDB.isEmpty();
-	}
-
-	private Stream<TranslateScript> logUnusedSection(TranslateScript section) {
-		log.info("Unused section: {}", section);
-		return Stream.empty();
 	}
 
 	private Stream<TranslationAO> logEmptySection(TranslateScript section) {
@@ -227,12 +205,7 @@ public class TranslatorServiceImpl implements TranslatorService {
 	}
 
 	private boolean filterBranche(TranslateScript section) {
-		return BRANCH_VERSION.equals(section.getBranch());
-	}
-
-	private boolean filterRootSection(TranslateScript section) {
-		return section.getName() != null && section.getName().startsWith(IB2_SUBSECTION);
-
+		return branchVersion.equals(section.getBranch());
 	}
 
 	private boolean filterClassNamesInKey(String translationKey) {
@@ -359,15 +332,42 @@ public class TranslatorServiceImpl implements TranslatorService {
 			for (Path entry : stream) {
 				if (Files.isDirectory(entry)) {
 					listSourceFiles(entry, resultPaths);
-				} else if (Files.isRegularFile(entry) && entry.toString().contains("/ib2/") && entry.toString()
-						.contains("/src/main/java/") && entry.getFileName() != null && (
-						entry.getFileName().toString().endsWith(".java") || entry.getFileName().toString()
-								.endsWith(".html"))) {
+				} else if (Files.isRegularFile(entry) && filterProjects(entry) && filterProjectSubpath(entry)
+						&& filterFileTypes(entry)) {
 					resultPaths.add(entry);
 				}
 
 			}
 		}
+	}
+
+	private boolean filterProjects(Path entry) {
+		if (projects == null || projects.isEmpty()) {
+			return true;
+		}
+		return projects.stream().anyMatch(projectName -> entry.toString().contains("/" + projectName + "/"));
+	}
+
+	private boolean filterProjectSubpath(Path entry) {
+		if (projectSubpaths == null || projectSubpaths.isEmpty()) {
+			return true;
+		}
+		return projectSubpaths.stream().anyMatch(subpath -> entry.toString().contains(subpath));
+	}
+
+	private boolean filterFileTypes(Path entry) {
+		if (fileTypes == null || fileTypes.isEmpty()) {
+			return true;
+		}
+		return fileTypes.stream().anyMatch(fileType -> entry.getFileName().toString().endsWith("." + fileType));
+	}
+
+	private boolean filterTranslationSubsections(TranslateScript section) {
+		if (subsections == null || subsections.isEmpty()) {
+			return true;
+		}
+		return subsections.stream()
+				.anyMatch(subsection -> section.getName() != null && section.getName().contains(subsection));
 	}
 
 }
