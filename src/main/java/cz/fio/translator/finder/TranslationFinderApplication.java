@@ -12,7 +12,7 @@ import cz.fio.translator.finder.service.TranslatorService;
 @SpringBootApplication
 public class TranslationFinderApplication implements ApplicationRunner {
 
-	//export JAVA_HOME=/home/baros/install/java14/jdk-14.0.2
+	//export JAVA_HOME=/java14/jdk-14.0.2
 	//export MAVEN_OPTS="-Dhttp.proxyHost=proxy.private.fio.cz -Dhttp.proxyPort=8080 -Dhttps.proxyHost=proxy.private.fio.cz -Dhttps.proxyPort=8080"
 	//./mvnw clean install
 
